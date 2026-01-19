@@ -1,5 +1,5 @@
 """
-完整投资分析数据获取脚本 v1.0
+完整投资分析数据获取脚本 v1.1
 整合宏观、行业、个股三层分析
 
 分析框架：
@@ -12,6 +12,7 @@
     python3 fetch_full_analysis.py 588000           # 完整分析ETF
     python3 fetch_full_analysis.py 002594           # 完整分析A股
     python3 fetch_full_analysis.py 00700 --market hk  # 完整分析港股
+    python3 fetch_full_analysis.py AAPL --market us  # 完整分析美股
 """
 
 import akshare as ak
@@ -27,6 +28,19 @@ warnings.filterwarnings('ignore')
 
 def log(msg):
     print(msg, file=sys.stderr)
+
+# 导入美股数据获取模块
+try:
+    from us_stock_fetcher import (
+        fetch_us_stock_history,
+        fetch_us_stock_quote,
+        fetch_us_stock_info,
+        batch_fetch_us_quotes
+    )
+    US_STOCK_AVAILABLE = True
+except ImportError:
+    US_STOCK_AVAILABLE = False
+    log("警告: 无法导入美股数据模块，美股分析功能不可用")
 
 
 def safe_float(val, default=0.0):
@@ -368,6 +382,27 @@ def fetch_stock_data(code, market="a"):
     log(f"【个股】获取K线数据: {code}")
 
     try:
+        # 美股数据获取
+        if market == "us":
+            if not US_STOCK_AVAILABLE:
+                log("错误: 美股数据模块不可用")
+                return None
+
+            df = fetch_us_stock_history(code, start_date='2023-01-01')
+            if df is None or df.empty:
+                return None
+
+            # 标准化列名
+            df = df.reset_index()
+            df.columns = [c.lower() for c in df.columns]
+            if 'adj close' in df.columns:
+                df = df.rename(columns={'adj close': 'close'})
+
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values('date').tail(250)
+            return df
+
+        # A股/港股数据获取
         if market == "hk":
             df = ak.stock_hk_hist(symbol=code, period="daily", adjust="qfq")
         elif code.startswith('5') or code.startswith('1'):
@@ -639,16 +674,23 @@ def full_analysis(code, market="a"):
             "code": code,
             "market": market,
             "analyze_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "version": "1.0",
+            "version": "1.1",
             "framework": "宏观-行业-个股"
         }
     }
 
-    # 1. 宏观环境
-    result["macro"] = fetch_macro_environment()
+    # 美股跳过宏观和行业分析
+    if market == "us":
+        # FIXME：后续完善美股宏观和行业分析
+        log("【美股】跳过宏观和行业分析，仅进行技术面分析")
+        result["macro"] = {"note": "美股暂不支持宏观分析"}
+        result["sector"] = {"note": "美股暂不支持行业分析"}
+    else:
+        # 1. 宏观环境
+        result["macro"] = fetch_macro_environment()
 
-    # 2. 行业分析
-    result["sector"] = fetch_sector_analysis(code)
+        # 2. 行业分析
+        result["sector"] = fetch_sector_analysis(code)
 
     # 3. 个股/ETF技术面
     df = fetch_stock_data(code, market)
@@ -664,18 +706,31 @@ def full_analysis(code, market="a"):
         return result
 
     # 4. 综合评分
-    result["score"] = calc_final_score(
-        result.get("macro", {}),
-        result.get("sector", {}),
-        result.get("technical", {})
-    )
+    if market == "us":
+        # 美股仅基于技术面评分
+        result["score"] = {
+            "total": result["technical"].get("trend", {}).get("score", 0) * 10 + 50,
+            "level": "技术面分析",
+            "suggestion": "仅供参考",
+            "breakdown": {
+                "macro": {"score": 0, "max": 20, "detail": ["美股暂不支持"]},# FIXME：后续完善美股宏观和行业分析
+                "sector": {"score": 0, "max": 20, "detail": ["美股暂不支持"]},# FIXME：后续完善美股宏观和行业分析
+                "technical": {"score": 60, "max": 60, "detail": ["基于技术指标"]}
+            }
+        }
+    else:
+        result["score"] = calc_final_score(
+            result.get("macro", {}),
+            result.get("sector", {}),
+            result.get("technical", {})
+        )
 
     return result
 
 
 def main():
     if len(sys.argv) < 2:
-        log("用法: python3 fetch_full_analysis.py <代码> [--market hk]")
+        log("用法: python3 fetch_full_analysis.py <代码> [--market hk|us]")
         sys.exit(1)
 
     code = sys.argv[1]
@@ -686,8 +741,12 @@ def main():
         if idx + 1 < len(sys.argv):
             market = sys.argv[idx + 1]
 
+    # 自动判断市场
     if code.startswith('0') and len(code) == 5:
         market = "hk"
+    elif code.isupper() and not code.isdigit():
+        # 美股代码通常是大写字母
+        market = "us"
 
     result = full_analysis(code, market)
     print(json.dumps(result, ensure_ascii=False, indent=2))

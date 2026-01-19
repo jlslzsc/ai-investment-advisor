@@ -1,5 +1,5 @@
 """
-个股深度分析数据获取脚本 v2.0
+个股深度分析数据获取脚本 v2.1
 专门为 /analyze 技能提供数据支持
 
 核心改进：
@@ -8,11 +8,13 @@
 3. 改进的支撑压力位：均线+整数关口+前高前低
 4. ATR动态止损
 5. 更科学的评分体系
+6. 支持美股分析
 
 用法：
     python3 fetch_stock_analysis.py 588000           # 分析ETF
     python3 fetch_stock_analysis.py 002594           # 分析A股
     python3 fetch_stock_analysis.py 00700 --market hk  # 分析港股
+    python3 fetch_stock_analysis.py AAPL --market us  # 分析美股
 """
 
 import akshare as ak
@@ -24,6 +26,18 @@ import warnings
 from datetime import datetime, timedelta
 
 warnings.filterwarnings('ignore')
+
+# 导入美股数据获取模块
+try:
+    from us_stock_fetcher import (
+        fetch_us_stock_history,
+        fetch_us_stock_quote,
+        fetch_us_stock_info,
+        batch_fetch_us_quotes
+    )
+    US_STOCK_AVAILABLE = True
+except ImportError:
+    US_STOCK_AVAILABLE = False
 
 
 def log(msg):
@@ -394,6 +408,39 @@ def calc_performance(df):
 
 
 # ============ 数据获取模块 ============
+
+def fetch_us_stock_kline(code, days=250):
+    """获取美股K线数据"""
+    log(f"获取美股日K线: {code}")
+    try:
+        if not US_STOCK_AVAILABLE:
+            log("错误: 美股数据模块不可用")
+            return None
+
+        df = fetch_us_stock_history(code, start_date='2023-01-01')
+        if df is None or df.empty:
+            return None
+
+        # 标准化列名
+        df = df.reset_index()
+        df.columns = [c.lower() for c in df.columns]
+
+        # 重命名列以匹配标准格式
+        rename_map = {}
+        if 'adj close' in df.columns:
+            rename_map['adj close'] = 'close'
+
+        if rename_map:
+            df = df.rename(columns=rename_map)
+
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').tail(days)
+
+        return df
+    except Exception as e:
+        log(f"获取美股K线失败: {e}")
+        return None
+
 
 def fetch_a_stock_kline(code, days=250):
     """获取A股K线数据"""
@@ -893,13 +940,15 @@ def analyze_stock(code, market="a"):
             "code": code,
             "market": market,
             "analyze_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "source": "AKShare",
-            "version": "2.0"
+            "source": "AKShare" if market != "us" else "pandas-datareader",
+            "version": "2.1"
         }
     }
 
     # 1. 获取日线K线数据
-    if market == "hk":
+    if market == "us":
+        df = fetch_us_stock_kline(code)
+    elif market == "hk":
         df = fetch_hk_stock_kline(code)
     else:
         df = fetch_a_stock_kline(code)
@@ -994,16 +1043,16 @@ def analyze_stock(code, market="a"):
     if market == "a" and not (code.startswith('5') or code.startswith('1')):
         result["fund_flow"] = fetch_fund_flow(code)
 
-    # 10. 财务数据（仅个股）
+    # 10. 财务数据（仅A股个股）
     if market == "a" and not (code.startswith('5') or code.startswith('1')):
         result["financial"] = fetch_financial_data(code)
 
-    # 11. 估值数据
+    # 11. 估值数据（仅A股个股）
     if market == "a" and not (code.startswith('5') or code.startswith('1')):
         result["valuation"] = fetch_valuation(code)
 
-    # 12. ETF特有信息
-    if code.startswith('5') or code.startswith('1'):
+    # 12. ETF特有信息（仅A股ETF）
+    if market == "a" and (code.startswith('5') or code.startswith('1')):
         result["etf_info"] = fetch_etf_info(code)
 
     # 13. 龙虎榜（仅A股个股）
@@ -1020,7 +1069,7 @@ def analyze_stock(code, market="a"):
 
 def main():
     if len(sys.argv) < 2:
-        log("用法: python3 fetch_stock_analysis.py <代码> [--market hk]")
+        log("用法: python3 fetch_stock_analysis.py <代码> [--market hk|us]")
         sys.exit(1)
 
     code = sys.argv[1]
@@ -1034,6 +1083,9 @@ def main():
     # 自动判断市场
     if code.startswith('0') and len(code) == 5:
         market = "hk"
+    elif code.isupper() and not code.isdigit():
+        # 美股代码通常是大写字母
+        market = "us"
 
     result = analyze_stock(code, market)
 
