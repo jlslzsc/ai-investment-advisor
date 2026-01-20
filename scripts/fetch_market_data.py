@@ -54,6 +54,16 @@ def log(msg):
     print(msg, file=sys.stderr)
 
 
+# 尝试导入美股数据获取模块
+try:
+    from us_stock_fetcher import fetch_us_stock_quote, fetch_us_stock_history, batch_fetch_us_quotes
+    US_STOCK_AVAILABLE = True
+    log("✓ 美股数据模块已加载")
+except ImportError:
+    US_STOCK_AVAILABLE = False
+    log("⚠ 美股数据模块未找到，美股功能将不可用")
+
+
 def calc_pnl(cost, price):
     """计算盈亏百分比"""
     return round((price - cost) / cost * 100, 2) if cost > 0 else 0
@@ -112,6 +122,8 @@ def infer_asset_type(code, name, market):
 
     if "ETF" in name_str or code_str.startswith(("5", "1")):
         return "ETF"
+    if "美" in market_str or "US" in market_str.upper():
+        return "美股"
     if "港" in market_str or len(code_str) == 5:
         return "港股"
     return "A股"
@@ -345,16 +357,17 @@ def enrich_with_technicals(items):
 def parse_holdings_md():
     """从 Holdings.md 解析持仓配置"""
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    holdings_path = os.path.join(script_dir, "..", "Config", "Holdings.md")
+    holdings_path = os.path.join(script_dir, "..", "股市信息", "Config", "Holdings.md")
 
     holdings_etf = {}
     holdings_stock = {}
     holdings_hk = {}
+    holdings_us = {}
     holdings_fund = {}
 
     if not os.path.exists(holdings_path):
         log(f"警告: Holdings.md 不存在: {holdings_path}")
-        return holdings_etf, holdings_stock, holdings_hk, holdings_fund
+        return holdings_etf, holdings_stock, holdings_hk, holdings_us, holdings_fund
 
     with open(holdings_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -395,6 +408,22 @@ def parse_holdings_md():
                 except (ValueError, IndexError):
                     continue
 
+    # 解析美股持仓
+    us_match = re.search(r"## 美股持仓\s*\n\s*\|[^\n]+\n\s*\|[-|\s]+\n((?:\|[^\n]+\n)*)", content)
+    if us_match:
+        rows = us_match.group(1).strip().split("\n")
+        for row in rows:
+            cols = [c.strip() for c in row.split("|")[1:-1]]
+            if len(cols) >= 5:
+                code, name, market, cost_str, qty_str, *rest = cols + [""] * 5
+                try:
+                    cost = float(cost_str)
+                    qty = int(qty_str) if qty_str and qty_str != "-" else 0
+                    buy_date = rest[1] if len(rest) > 1 and rest[1] and rest[1] != "-" else "2023-01-01"
+                    holdings_us[code] = {"name": name, "cost": cost, "qty": qty, "buy_date": buy_date}
+                except (ValueError, IndexError):
+                    continue
+
     # 解析基金持仓
     fund_match = re.search(r"## 基金持仓\s*\n\s*\|[^\n]+\n\s*\|[-|\s]+\n((?:\|[^\n]+\n)*)", content)
     if fund_match:
@@ -414,7 +443,7 @@ def parse_holdings_md():
                 except (ValueError, IndexError):
                     continue
 
-    return holdings_etf, holdings_stock, holdings_hk, holdings_fund
+    return holdings_etf, holdings_stock, holdings_hk, holdings_us, holdings_fund
 
 
 # ============ 关注池解析 ============
@@ -422,7 +451,7 @@ def parse_holdings_md():
 def parse_watchlist_md():
     """从 Watchlist.md 解析关注池"""
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    watchlist_path = os.path.join(script_dir, "..", "Config", "Watchlist.md")
+    watchlist_path = os.path.join(script_dir, "..", "股市信息", "Config", "Watchlist.md")
 
     watchlist_items = []
     focus_industries = []
@@ -724,6 +753,71 @@ def fetch_fund_data(holdings_fund):
     return result
 
 
+def fetch_us_stock_data(holdings_us, watchlist_items=None):
+    """获取美股数据"""
+    log("获取美股...")
+    holdings_result = []
+    watchlist_result = []
+    watchlist_items = watchlist_items or []
+
+    if not US_STOCK_AVAILABLE:
+        log("美股数据模块不可用，跳过美股数据获取")
+        return holdings_result, watchlist_result
+
+    try:
+        # 批量获取持仓美股报价
+        if holdings_us:
+            symbols = list(holdings_us.keys())
+            quotes = batch_fetch_us_quotes(symbols, delay=0.3)
+
+            for code, info in holdings_us.items():
+                if code in quotes:
+                    quote = quotes[code]
+                    holdings_result.append({
+                        "code": code,
+                        "name": info["name"],
+                        "type": "美股",
+                        "price": quote['price'],
+                        "change": quote['change_pct'],
+                        "volume": quote['volume'],
+                        "cost": info["cost"],
+                        "qty": info.get("qty", 0),
+                        "pnl": calc_pnl(info["cost"], quote['price']),
+                        "days": calc_days(info["buy_date"]),
+                        "date": quote['date']
+                    })
+                else:
+                    log(f"警告: 无法获取美股 {code} 数据")
+
+        # 获取关注池美股数据
+        for item in watchlist_items:
+            code = item.get("code")
+            if not code:
+                continue
+
+            try:
+                quote = fetch_us_stock_quote(code, max_retries=2)
+                if quote:
+                    base = build_watchlist_base(item)
+                    base["code"] = code
+                    if not base["name"]:
+                        base["name"] = code
+                    base.update({
+                        "price": quote['price'],
+                        "change": quote['change_pct'],
+                        "volume": quote['volume'],
+                        "date": quote['date']
+                    })
+                    watchlist_result.append(base)
+            except Exception as e:
+                log(f"获取美股关注池 {code} 失败: {e}")
+
+    except Exception as e:
+        log(f"获取美股失败: {e}")
+
+    return holdings_result, watchlist_result
+
+
 def fetch_macro_data():
     """获取宏观经济数据"""
     log("获取宏观数据...")
@@ -1007,9 +1101,9 @@ def fetch_stock_notices(stock_codes):
 
 def main():
     # 从 Holdings.md 读取持仓配置
-    holdings_etf, holdings_stock, holdings_hk, holdings_fund = parse_holdings_md()
+    holdings_etf, holdings_stock, holdings_hk, holdings_us, holdings_fund = parse_holdings_md()
 
-    log(f"解析到持仓: ETF={len(holdings_etf)}, A股={len(holdings_stock)}, 港股={len(holdings_hk)}, 基金={len(holdings_fund)}")
+    log(f"解析到持仓: ETF={len(holdings_etf)}, A股={len(holdings_stock)}, 港股={len(holdings_hk)}, 美股={len(holdings_us)}, 基金={len(holdings_fund)}")
 
     # 从 Watchlist.md 读取关注池配置
     watchlist_items, focus_industries, excluded, watchlist_meta = parse_watchlist_md()
@@ -1047,6 +1141,7 @@ def main():
         watchlist_etf = [item for item in watchlist_items if item.get("type") == "ETF"]
         watchlist_a = [item for item in watchlist_items if item.get("type") == "A股"]
         watchlist_hk = [item for item in watchlist_items if item.get("type") == "港股"]
+        watchlist_us = [item for item in watchlist_items if item.get("type") == "美股"]
 
         # ETF
         etf_holdings, etf_watchlist = fetch_etf_data(
@@ -1069,6 +1164,13 @@ def main():
         )
         result["holdings"].extend(hk_stock_holdings)
 
+        # 美股
+        us_stock_holdings, us_stock_watchlist = fetch_us_stock_data(
+            holdings_us,
+            watchlist_us if MODULES["watchlist"] else []
+        )
+        result["holdings"].extend(us_stock_holdings)
+
         # 基金
         fund_data = fetch_fund_data(holdings_fund)
         result["holdings"].extend(fund_data)
@@ -1078,6 +1180,7 @@ def main():
             result["watchlist"].extend(etf_watchlist)
             result["watchlist"].extend(a_stock_watchlist)
             result["watchlist"].extend(hk_stock_watchlist)
+            result["watchlist"].extend(us_stock_watchlist)
 
         # 技术指标
         if MODULES["technicals"]:
