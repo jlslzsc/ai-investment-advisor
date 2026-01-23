@@ -1,0 +1,57 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: ai-advisor-backend:latest
+    container_name: ai-advisor-backend
+    restart: unless-stopped
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=false
+      - PROJECT_PATH=/app
+      - DATA_PATH=/app/股市信息
+      - CLAUDE_TIMEOUT=900
+      - NOTION_API_KEY=${NOTION_API_KEY:-}
+      - NOTION_PAGE_ID=${NOTION_PAGE_ID:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      # 数据目录持久化（报告、配置等）
+      - ./股市信息:/app/股市信息
+      # Claude 认证配置
+      - ~/.config/anthropic:/root/.config/anthropic:ro
+      - ~/.claude:/root/.claude:ro
+    networks:
+      - ai-advisor-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    image: ai-advisor-frontend:latest
+    container_name: ai-advisor-frontend
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - ai-advisor-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+networks:
+  ai-advisor-net:
+    driver: bridge

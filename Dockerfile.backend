@@ -1,0 +1,44 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Claude CLI
+RUN curl -fsSL https://claude.ai/install.sh | sh || true
+ENV PATH="/root/.claude/bin:$PATH"
+
+# Copy requirements first (for better caching)
+COPY server/requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy server code
+COPY server/ ./server/
+
+# Copy scripts
+COPY scripts/ ./scripts/
+
+# Copy Claude config
+COPY .claude/ ./.claude/
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PROJECT_PATH=/app
+ENV DATA_PATH=/app/股市信息
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
+# Run server
+WORKDIR /app/server
+CMD ["python", "main.py"]

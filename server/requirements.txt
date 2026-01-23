@@ -1,0 +1,26 @@
+# FastAPI 后端
+fastapi>=0.104.0
+uvicorn>=0.24.0
+httpx>=0.25.0
+aiohttp>=3.9.0
+aiofiles>=23.2.1
+python-multipart>=0.0.6
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# 数据获取脚本依赖
+yfinance>=0.2.36
+akshare>=1.12.0
+tushare>=1.4.0
+pandas>=2.0.0
+pandas-datareader>=0.10.0
+numpy>=1.24.0
+requests>=2.31.0
+
+# Notion 同步
+notion-client>=2.2.0
+md2notionpage>=0.1.0
+
+# 工具
+pyyaml>=6.0.1
+watchdog>=3.0.0
