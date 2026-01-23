@@ -3,7 +3,10 @@
 # 用法: ./update.sh
 
 set -e
-cd /opt/ai-investment-advisor
+
+# 获取脚本所在目录
+INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$INSTALL_DIR"
 
 echo "=== 拉取最新代码 ==="
 git pull

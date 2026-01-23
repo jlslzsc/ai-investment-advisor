@@ -16,7 +16,7 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # 配置
-INSTALL_DIR="/opt/ai-investment-advisor"
+INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"  # 使用脚本所在目录
 REPO_URL="${REPO_URL:-https://github.com/你的用户名/ai-investment-advisor.git}"
 
 echo ""
@@ -109,8 +109,8 @@ log_info "Nginx 配置完成"
 echo ""
 
 # 第七步：创建 systemd 服务
-log_info "第六步：创建后台服务..."
-cat > /etc/systemd/system/ai-advisor.service << 'EOF'
+log_info "第七步：创建后台服务..."
+cat > /etc/systemd/system/ai-advisor.service << EOF
 [Unit]
 Description=AI Investment Advisor Backend
 After=network.target
@@ -118,7 +118,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/ai-investment-advisor/server
+WorkingDirectory=${INSTALL_DIR}/server
 ExecStart=/usr/bin/python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5
