@@ -277,14 +277,6 @@ const saving = ref(false)
 const saveMessage = ref('')
 const saveError = ref(false)
 
-const yuqueStatus = reactive({
-  connected: false,
-  repo_name: '',
-})
-const syncing = ref(false)
-const syncMessage = ref('')
-const syncError = ref(false)
-
 const configs = ref<{ name: string; exists: boolean }[]>([])
 const editingConfig = ref<{ name: string; content: string } | null>(null)
 
@@ -292,7 +284,6 @@ onMounted(async () => {
   await loadApiKeys()
   await loadNotionConfig()
   await loadNotionStatus()
-  await loadYuqueStatus()
   await loadConfigs()
 })
 
@@ -324,16 +315,6 @@ async function saveApiKeys() {
     saveMessage.value = '保存失败: ' + String(error)
   } finally {
     saving.value = false
-  }
-}
-
-async function loadYuqueStatus() {
-  try {
-    const data = await api.getYuqueStatus()
-    yuqueStatus.connected = data.connected
-    yuqueStatus.repo_name = data.repo_name || ''
-  } catch (error) {
-    console.error('Failed to load Yuque status:', error)
   }
 }
 
@@ -418,25 +399,6 @@ async function syncAllToNotion() {
     notionSyncMessage.value = '同步失败: ' + String(error)
   } finally {
     notionSyncing.value = false
-  }
-}
-
-async function syncAllToYuque() {
-  syncing.value = true
-  syncMessage.value = ''
-  syncError.value = false
-
-  try {
-    const result = await api.syncToYuque()
-    syncMessage.value = `同步完成: ${result.synced.length} 成功, ${result.failed.length} 失败`
-    if (result.failed.length > 0) {
-      syncError.value = true
-    }
-  } catch (error) {
-    syncError.value = true
-    syncMessage.value = '同步失败: ' + String(error)
-  } finally {
-    syncing.value = false
   }
 }
 
